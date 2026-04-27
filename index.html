@@ -46,7 +46,7 @@ if('serviceWorker' in navigator){
 <div id="boot">
   <div id="boot-logo">&#x1F4B0;</div>
   <div id="boot-title">MONEY HEIST v10</div>
-  <div id="boot-sub">XAU/USD &middot; BTC/USD &middot; ULTRA-GOD MODE</div>
+  <div id="boot-sub">XAU/USD &middot; LIVE TRADING &middot; ULTRA-GOD MODE</div>
   <div id="boot-bar-wrap"><div id="boot-bar"></div></div>
   <div id="boot-msg" id="boot-msg">Loading...</div>
 </div>
@@ -146,6 +146,7 @@ const SPREAD_OK=0.15,MAX_SPREAD=0.80,MIN_LOT=0.01,MAX_LOT=10.0,
       MAX_LOT_NORMAL=1.0,MAX_SCORE=16;
 // Per-instrument spread limits — BTC naturally has much wider spreads than XAU
 const SPREAD_LIMITS={XAUUSD:0.80};
+// XAU/USD only — BTC removed
 
 // ── INSTRUMENT CONFIG ──────────────────────────────────────────────
 const INSTRUMENTS={
@@ -251,54 +252,33 @@ function findStructureSL(cs, dir, atr){
 //  Layer 6: Hard maximum cap (never risk more than 20% of balance)
 // ══════════════════════════════════════════════════════════════════
 function calcHFTSL({cs, dir, entry, atr, spread, hourGMT, balance, inst="XAUUSD"}){
-  const isBTC=inst==="BTCUSD";
-  const isXAU=!isBTC;
-
-  // Layer 1: Structure anchor
-  const structureLevel=findStructureSL(cs, dir, atr);
-
-  // Layer 2: Sweep buffer beyond structure (0.3× ATR)
-  // This protects against the classic liquidity sweep that takes out SLs
-  // placed directly at structure before the real move continues
+  // XAU/USD only
+  const Layer1=findStructureSL(cs, dir, atr);
   const sweepBuffer=atr*0.30;
+  const spreadBuffer=spread*2.0;
 
-  // Layer 3: Spread buffer
-  const spreadBuffer=isXAU?spread*2.0:spread*1.5;
-
-  // Raw SL distance from structure
   let rawSL;
-  if(structureLevel!==null){
+  if(Layer1!==null){
     if(dir==="BUY"){
-      // SL sits below structure low; buffers extend it AWAY from price
-      rawSL=Math.abs(entry-(structureLevel-sweepBuffer-spreadBuffer));
+      rawSL=Math.abs(entry-(Layer1-sweepBuffer-spreadBuffer));
     }else{
-      // SL sits above structure high
-      rawSL=Math.abs((structureLevel+sweepBuffer+spreadBuffer)-entry);
+      rawSL=Math.abs((Layer1+sweepBuffer+spreadBuffer)-entry);
     }
   }else{
-    rawSL=(isXAU?1.2:0.6)*atr+spreadBuffer;
+    rawSL=1.2*atr+spreadBuffer;
   }
 
-  // Layer 4: Session volatility multiplier FIRST (before ATR floor, to avoid double-inflation)
-  if(isXAU){
-    const sessMult=getSessionSLMult(hourGMT||0);
-    rawSL=rawSL*sessMult;
-  }
+  const sessMult=getSessionSLMult(hourGMT||0);
+  rawSL=rawSL*sessMult;
 
-  // Always ensure minimum ATR coverage — floor applied AFTER session mult
-  const minATRCover=isXAU?atr*1.0:atr*0.5;
+  const minATRCover=atr*1.0;
   rawSL=Math.max(rawSL, minATRCover);
 
-  // Layer 5: Instrument hard floors
-  const hardFloor=isXAU?0.80:8.00;
-  rawSL=Math.max(rawSL, hardFloor);
+  rawSL=Math.max(rawSL, 0.80);
 
-  // Layer 6: Cap SL — never risk more than 10% of balance per trade
-  const pip=isBTC?0.1:10;
+  const pip=10;
   const maxRiskPerTrade=balance*0.10;
-  const minLot=MIN_LOT;
-  // Max SL at min lot = maxRiskPerTrade / (minLot * pip)
-  const maxSLAtMinLot=maxRiskPerTrade/(minLot*pip);
+  const maxSLAtMinLot=maxRiskPerTrade/(MIN_LOT*pip);
   rawSL=Math.min(rawSL, maxSLAtMinLot);
 
   const slPrice=dir==="BUY"
@@ -314,8 +294,7 @@ function calcHFTSL({cs, dir, entry, atr, spread, hourGMT, balance, inst="XAUUSD"
 //  3-Zone capital model: NORMAL / CAUTION / STOPPED
 // ══════════════════════════════════════════════════════════════════
 function calcHFTLots({balance, dayStartBal, strength, slD, inst="XAUUSD"}){
-  const isBTC=inst==="BTCUSD";
-  const pip=isBTC?0.1:10;
+  const pip=10; // XAU/USD only
 
   // Capital zone
   const drawdownPct=(dayStartBal-balance)/Math.max(dayStartBal,0.01);
@@ -651,7 +630,7 @@ function s_FVG(cs){
   if(!cs||cs.length<3)return null;
   const[a,,b]=cs.slice(-3);const c=cs[cs.length-1];
   // Tolerance scales with price: 0.8 for XAU, ~80 for BTC
-  const tol=c.close>5000?c.close*0.001:0.8;
+  const tol=0.8;
   if(b.low>a.high&&c.low<=b.low+tol&&c.close>=a.high&&c.bull)return{dir:"BUY",name:"FVG"};
   if(b.high<a.low&&c.high>=b.high-tol&&c.close<=a.low&&!c.bull)return{dir:"SELL",name:"FVG"};
   return null;
@@ -706,11 +685,11 @@ function s_OB(cs,atr){
   const c=cs[cs.length-1],c1=cs[cs.length-2],c2=cs[cs.length-3],c3=cs[cs.length-4];
   if(!c3.bull&&c2.bull&&c1.bull&&c2.body>atr*0.5&&c1.body>atr*0.4){
     const obTop=Math.max(c3.open,c3.close),obBot=Math.min(c3.open,c3.close);
-    const obTol=c.close>5000?atr*0.05:0.5;if(c.low<=obTop+obTol&&c.close>=obBot&&c.bull)return{dir:"BUY",name:"OB"};
+    const obTol=0.5;if(c.low<=obTop+obTol&&c.close>=obBot&&c.bull)return{dir:"BUY",name:"OB"};
   }
   if(c3.bull&&!c2.bull&&!c1.bull&&c2.body>atr*0.5&&c1.body>atr*0.4){
     const obTop=Math.max(c3.open,c3.close),obBot=Math.min(c3.open,c3.close);
-    const obTol2=c.close>5000?atr*0.05:0.5;if(c.high>=obBot-obTol2&&c.close<=obTop&&!c.bull)return{dir:"SELL",name:"OB"};
+    const obTol2=0.5;if(c.high>=obBot-obTol2&&c.close<=obTop&&!c.bull)return{dir:"SELL",name:"OB"};
   }
   return null;
 }
@@ -968,7 +947,7 @@ function masterSignal({cs,hour,kL,spread,orb,news,newsArr,fakeLog,minConf,tfCand
 
   if(nearRound(c.close))return null;
   // Only block if massively extended — BTC routinely runs 4-10× ATR on breakout days
-  const extMult=_inst==="BTCUSD"?4.0:1.5;
+  const extMult=1.5;
   if(dir==="BUY"&&kL.pdh&&c.close>kL.pdh+atr*extMult)return null;
   if(dir==="SELL"&&kL.pdl&&c.close<kL.pdl-atr*extMult)return null;
 
@@ -1018,17 +997,11 @@ function masterSignal({cs,hour,kL,spread,orb,news,newsArr,fakeLog,minConf,tfCand
 function manageTrade(t, price, atr, liveProvider, pip=10){
   const tr={...t};
   const inst=tr.inst||_currentInst||"XAUUSD";
-  const isBTC=inst==="BTCUSD";
-  const isSyn=inst==="V75"||inst==="STEPIDX";
 
   // Live P&L
   tr.pnl=tr.dir==="BUY"
     ?+((price-tr.entry)*pip*tr.lots).toFixed(2)
     :+((tr.entry-price)*pip*tr.lots).toFixed(2);
-
-  // ATR floor per instrument
-  const atrFloor=isBTC?20:isSyn?0.50:0.80;
-  const effectiveATR=Math.max(atr||tr.atr||2.0, atrFloor);
 
   // Track running peak/trough continuously
   if(tr.dir==="BUY"){
@@ -1037,27 +1010,42 @@ function manageTrade(t, price, atr, liveProvider, pip=10){
     tr.lowWater=tr.lowWater!=null?Math.min(tr.lowWater,price):price;
   }
 
-  // ── TRAILING STOP — active immediately from entry (no static SL, no breakeven wait) ──
-  // Trail tightens progressively as TPs are hit:
-  //   Pre-TP1:  2.0× ATR — wide initial room so noise doesn't stop out
-  //   TP1→TP2:  1.2× ATR — tighten to protect early gains
-  //   TP2→TP3:  0.8× ATR — locking in profits
-  //   Post-TP3: 0.5× ATR — tight trail on the runner
-  let trailMult;
-  if(tr.p3Done)      trailMult=0.50;
-  else if(tr.p2Done) trailMult=0.80;
-  else if(tr.p1Done) trailMult=1.20;
-  else               trailMult=2.00;
+  // ── NEW TRAILING STOP LOGIC ──────────────────────────────────────
+  // Step 1: Trail does NOT activate until price moves 35% of SL distance
+  //         in the trade direction from entry.
+  //         e.g. BUY entry=2000, slD=10 → trail activates at 2000+(10*0.35)=2003.50
+  // Step 2: When activated, SL snaps to entry (Break Even) first.
+  // Step 3: After BE, SL follows price maintaining 30% of the entry→price distance.
+  //         trailSL = price - (price - entry) * 0.30  [BUY]
+  //         trailSL = price + (entry - price) * 0.30  [SELL]
+  //         This means the trail gap grows as price moves further — locks more profit.
+  // SL only ever moves in the profitable direction (ratchet).
 
-  const minTrail=isBTC?price*0.002:isSyn?effectiveATR*0.30:effectiveATR*0.40;
-  const trD=Math.max(effectiveATR*trailMult, minTrail);
+  const slD=tr.slD||Math.abs(tr.entry-tr.sl)||2.0;
+  const activationDist=slD*0.35;// 35% of SL distance
 
   if(tr.dir==="BUY"){
-    const ns=+(tr.highWater-trD).toFixed(2);
-    if(ns>tr.sl){tr.sl=ns;tr.trailing=true;}
+    const moved=price-tr.entry;
+    if(moved>=activationDist){
+      tr.trailing=true;
+      // Trail = price minus 30% of total move from entry
+      const trailGap=(price-tr.entry)*0.30;
+      const newSL=+(price-Math.max(trailGap, 0.01)).toFixed(2);
+      // BE floor: never go below entry once trail activated
+      const beFloor=tr.entry;
+      if(newSL>tr.sl){tr.sl=Math.max(newSL,beFloor);}
+      else if(tr.sl<beFloor){tr.sl=beFloor;}// snap to BE immediately on activation
+    }
   }else{
-    const ns=+(tr.lowWater+trD).toFixed(2);
-    if(ns<tr.sl){tr.sl=ns;tr.trailing=true;}
+    const moved=tr.entry-price;
+    if(moved>=activationDist){
+      tr.trailing=true;
+      const trailGap=(tr.entry-price)*0.30;
+      const newSL=+(price+Math.max(trailGap, 0.01)).toFixed(2);
+      const beFloor=tr.entry;
+      if(newSL<tr.sl){tr.sl=Math.min(newSL,beFloor);}
+      else if(tr.sl>beFloor){tr.sl=beFloor;}
+    }
   }
 
   return tr;
@@ -1683,7 +1671,7 @@ function App(){
   const INIT_BAL=50;
 
   // ── Mode: "backtest" | "forward" | "sim" ──────────────────────
-  const [mode,setMode]=useState("backtest"); // "backtest" | "forward" only
+  const [mode,setMode]=useState("forward"); // live only — backtest removed
   const instrument="XAUUSD"; // locked to XAU/USD only
   const rInstrument=useRef("XAUUSD"); // always XAUUSD
   const [btStatus,setBtStatus]=useState("");
@@ -1725,7 +1713,7 @@ function App(){
   const [log,setLog]=useState([]);
   const [stats,setStats]=useState({w:0,l:0,pnl:0,tp3:0,total:0});
   const [phase,setPhase]=useState("STANDBY");
-  const [status,setStatus]=useState("Choose mode below ↓");
+  const [status,setStatus]=useState("Connecting to live feed...");
   const [livePrice,setLivePrice]=useState(0);
   const [priceSource,setPriceSource]=useState(null);
   const [lastFetchTs,setLastFetchTs]=useState(null);
@@ -1805,7 +1793,7 @@ function App(){
   const rReplaySpeed=useRef(10);
   const rReplayMode=useRef("auto");
   const rLiveProvider=useRef("deriv");
-  const rMode=useRef("sim"); // tracks current mode for processCandle chart updates
+  const rMode=useRef("forward"); // always forward/live
   const rMktState=useRef("NORMAL"); // current market state: TRENDING/RANGING/NORMAL
 
   useEffect(()=>{rMaxLoss.current=maxLoss;},[maxLoss]);
@@ -1824,6 +1812,13 @@ function App(){
     const iv=setInterval(()=>{rSessionSecs.current++;setSessionSecs(rSessionSecs.current);},1000);
     return()=>clearInterval(iv);
   },[sessionRunning]);
+
+  // Auto-start live feed on mount
+  useEffect(()=>{
+    const t=setTimeout(()=>startForwardTest(),300);
+    return()=>clearTimeout(t);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[]);
 
   const pushLog=useCallback(e=>{
     rLog.current=[e,...rLog.current].slice(0,500);setLog([...rLog.current]);
@@ -1941,10 +1936,10 @@ function App(){
 
     // Manage open trade
     if(rTrade.current){
-      rTrade.current=manageTrade(rTrade.current,price,atr,rLiveProvider.current,INSTRUMENTS[rInstrument.current]?.pip||10);
+      rTrade.current=manageTrade(rTrade.current,price,atr,rLiveProvider.current,10);
       const exit=checkExit(rTrade.current,price);
       if(exit){
-        const t=rTrade.current,pip=INSTRUMENTS[rInstrument.current]?.pip||10;
+        const t=rTrade.current,pip=10;
         if(exit.partial){
           const cl=+(t.lots*exit.pct).toFixed(4);
           const pnl=t.dir==="BUY"?+((exit.exitPrice-t.entry)*pip*cl).toFixed(2):+((t.entry-exit.exitPrice)*pip*cl).toFixed(2);
@@ -2040,10 +2035,10 @@ function App(){
     }
     // Manage second position if open
     if(rTrade2.current){
-      rTrade2.current=manageTrade(rTrade2.current,price,atr,rLiveProvider.current,INSTRUMENTS[rInstrument.current]?.pip||10);
+      rTrade2.current=manageTrade(rTrade2.current,price,atr,rLiveProvider.current,10);
       const exit2=checkExit(rTrade2.current,price);
       if(exit2){
-        const t=rTrade2.current,pip=INSTRUMENTS[rInstrument.current]?.pip||10;
+        const t=rTrade2.current,pip=10;
         if(exit2.partial){
           const cl=+(t.lots*exit2.pct).toFixed(4);
           const pnl=t.dir==="BUY"?+((exit2.exitPrice-t.entry)*pip*cl).toFixed(2):+((t.entry-exit2.exitPrice)*pip*cl).toFixed(2);
@@ -2194,7 +2189,7 @@ function App(){
       if(isNewsBlackout(rNews.current))reasons.push("news blackout");
       if(newC.length<5)reasons.push("building history ("+newC.length+"/5)");
       const atrNow=calcATR(newC);
-      const atrFlatThresh=_currentInst==="BTCUSD"?50:0.5;
+      const atrFlatThresh=0.5;
       if(atrNow<atrFlatThresh)reasons.push("ATR flat "+atrNow.toFixed(2));
       // Reuse sig from above (already computed) — just check vote count for status
       if(sig){
@@ -2299,11 +2294,7 @@ function App(){
     rTfCandles.current=mtfSlice;
     // Realistic spread per instrument and session
     const hour=new Date(candle.ts).getUTCHours();
-    const _ri=rInstrument.current;
-    const spread=_ri==="BTCUSD" ? (kzAt(hour)?3.0:5.0)
-               :_ri==="V75"     ? (kzAt(hour)?4.0:8.0)
-               :_ri==="STEPIDX" ? 0.5
-               :                  (kzAt(hour)?0.20:0.30); // XAUUSD
+    const spread=kzAt(hour)?0.20:0.30; // XAUUSD session spread
     rSpread.current=spread;setLiveSpread(spread);
     processCandle(candle,spread);
     const newIdx=idx+1;
@@ -2557,10 +2548,10 @@ function App(){
       if(rRunning.current&&rTrade.current){
         // Use cached ATR (updated on each candle close) — avoids recomputing on every tick
         const atrNow=rCachedATR.current;
-        rTrade.current=manageTrade(rTrade.current,price,atrNow,rLiveProvider.current,INSTRUMENTS[rInstrument.current]?.pip||10);
+        rTrade.current=manageTrade(rTrade.current,price,atrNow,rLiveProvider.current,10);
         const tickExit=checkExit(rTrade.current,price);
         if(tickExit&&!tickExit.partial){
-          const t=rTrade.current,pip=INSTRUMENTS[rInstrument.current]?.pip||10;
+          const t=rTrade.current,pip=10;
           const pnl=t.dir==="BUY"?+((tickExit.exitPrice-t.entry)*pip*t.lots).toFixed(2):+((t.entry-tickExit.exitPrice)*pip*t.lots).toFixed(2);
           const won=pnl>0;
           rBalance.current=+(rBalance.current+pnl).toFixed(2);
@@ -2576,7 +2567,7 @@ function App(){
             pnl,time:new Date().toLocaleTimeString(),ts:Date.now()},...rLog.current].slice(0,500);
           setLog([...rLog.current]);
         }else if(tickExit&&tickExit.partial){
-          const t=rTrade.current,pip=INSTRUMENTS[rInstrument.current]?.pip||10,cl=+(t.lots*tickExit.pct).toFixed(4);
+          const t=rTrade.current,pip=10,cl=+(t.lots*tickExit.pct).toFixed(4);
           const pnl=t.dir==="BUY"?+((tickExit.exitPrice-t.entry)*pip*cl).toFixed(2):+((t.entry-tickExit.exitPrice)*pip*cl).toFixed(2);
           const newSL=tickExit.result==="TP1"?t.entry:tickExit.result==="TP2"?t.tp1:tickExit.result==="TP3🏆"?t.tp2:t.sl;
           rTrade.current={...t,lots:+(t.lots*(1-tickExit.pct)).toFixed(4),
@@ -2594,10 +2585,10 @@ function App(){
       }
       if(rRunning.current&&rTrade2.current){
         const atrNow2=rCachedATR.current;
-        rTrade2.current=manageTrade(rTrade2.current,price,atrNow2,rLiveProvider.current,INSTRUMENTS[rInstrument.current]?.pip||10);
+        rTrade2.current=manageTrade(rTrade2.current,price,atrNow2,rLiveProvider.current,10);
         const tick2Exit=checkExit(rTrade2.current,price);
         if(tick2Exit&&!tick2Exit.partial){
-          const t=rTrade2.current,pip=INSTRUMENTS[rInstrument.current]?.pip||10;
+          const t=rTrade2.current,pip=10;
           const pnl=t.dir==="BUY"?+((tick2Exit.exitPrice-t.entry)*pip*t.lots).toFixed(2):+((t.entry-tick2Exit.exitPrice)*pip*t.lots).toFixed(2);
           rBalance.current=+(rBalance.current+pnl).toFixed(2);
           rStats.current={...rStats.current,w:rStats.current.w+(pnl>0?1:0),l:rStats.current.l+(pnl>0?0:1),
@@ -2781,10 +2772,10 @@ function App(){
         )}
         {/* Mode badge */}
         <div style={{padding:"3px 9px",borderRadius:"20px",fontSize:"9px",fontWeight:"600",
-          background:mode==="forward"?RED+"20":PURPLE+"20",
-          border:`1px solid ${mode==="forward"?RED+"40":PURPLE+"40"}`,
-          color:mode==="forward"?RED:PURPLE}}>
-          {mode==="forward"?"● LIVE":"⏪ BACKTEST"}
+          background:RED+"20",
+          border:`1px solid ${RED+"40"}`,
+          color:RED}}>
+          ● LIVE
         </div>
         {kz&&<div style={{padding:"3px 9px",borderRadius:"20px",fontSize:"9px",background:`${kz.c}15`,border:`1px solid ${kz.c}40`,color:kz.c}}>● {kz.n}</div>}
         {inBlackoutNow&&<div style={{padding:"3px 9px",borderRadius:"20px",fontSize:"9px",background:RED+"15",border:`1px solid ${RED}40`,color:RED,animation:"blink 1s infinite"}}>📰 HIGH NEWS 🚫</div>}
@@ -2794,13 +2785,6 @@ function App(){
             style={{padding:"6px 16px",borderRadius:"6px",border:`1px solid ${RED}`,background:running?RED+"22":RED,
               color:running?RED:TEXT,fontSize:"12px",fontWeight:"600",cursor:"pointer"}}>
             {running?"⏸ Stop":"▶ Live"}
-          </button>
-        )}
-        {mode==="backtest"&&btCandles.length>0&&(
-          <button className="btn" onClick={()=>setBtRunning(r=>!r)}
-            style={{padding:"6px 16px",borderRadius:"6px",border:`1px solid ${PURPLE}`,
-              background:btRunning?PURPLE+"22":PURPLE,color:btRunning?PURPLE:TEXT,fontSize:"12px",fontWeight:"600",cursor:"pointer"}}>
-            {btRunning?"⏸ Pause":"▶ Play"}
           </button>
         )}
         <button className="btn" onClick={()=>{
@@ -2872,7 +2856,7 @@ function App(){
           lineHeight:"1.35",maxHeight:"calc(9.5px * 1.35 * 2)",
           color:status.includes("🔥")||status.includes("✅")||status.includes("🏆")?GREEN:
             status.includes("❌")||status.includes("🛑")?RED:MUTED}}>
-          {mode==="backtest"&&btCandles.length>0?`[${btIdx}/${btCandles.length}] `:""}{status}
+          {status}
         </span>
         <SpreadPill spread={liveSpread} inst={instrument}/>
         {lastSignalVotes&&<VoteBar buyVotes={lastSignalVotes.buy} sellVotes={lastSignalVotes.sell}/>}
@@ -2896,28 +2880,14 @@ function App(){
         /* Chart tab — fixed layout, chart never shifts */
         <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden",padding:"6px 10px",gap:"4px"}}>
 
-          {/* Backtest replay controls — collapsible, fixed height */}
-          {mode==="backtest"&&btCandles.length>0&&(
-            <BtControls
-              btRunning={btRunning} setBtRunning={setBtRunning}
-              replayMode={replayMode} setReplayMode={setReplayMode}
-              replaySpeed={replaySpeed} setReplaySpeed={setReplaySpeed}
-              rReplaySpeed={rReplaySpeed}
-              btIdx={btIdx} btCandles={btCandles}
-              replayStep={replayStep}
-            />
-          )}
-
           {/* Forward test status */}
-          {mode==="forward"&&(
-            <div style={{flexShrink:0,background:PANEL,borderRadius:"6px",border:`1px solid ${running?RED+"40":BORDER}`,padding:"6px 10px",display:"flex",gap:"8px",alignItems:"center"}}>
-              <span style={{fontSize:"8px",color:running?RED:DIM,animation:running?"blink 1.5s infinite":"none"}}>●</span>
-              <div style={{flex:1,minWidth:0}}>
-                <div style={{fontSize:"9px",color:running?RED:DIM,fontWeight:"600",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{liveStatus||"Live feed inactive"}</div>
-              </div>
-              <div style={{fontSize:"8px",color:GREEN,fontFamily:"'JetBrains Mono',monospace",flexShrink:0,fontWeight:"700"}}>DERIV ✅</div>
+          <div style={{flexShrink:0,background:PANEL,borderRadius:"6px",border:`1px solid ${running?RED+"40":BORDER}`,padding:"6px 10px",display:"flex",gap:"8px",alignItems:"center"}}>
+            <span style={{fontSize:"8px",color:running?RED:DIM,animation:running?"blink 1.5s infinite":"none"}}>●</span>
+            <div style={{flex:1,minWidth:0}}>
+              <div style={{fontSize:"9px",color:running?RED:DIM,fontWeight:"600",overflow:"hidden",whiteSpace:"nowrap",textOverflow:"ellipsis"}}>{liveStatus||"Live feed inactive"}</div>
             </div>
-          )}
+            <div style={{fontSize:"8px",color:GREEN,fontFamily:"'JetBrains Mono',monospace",flexShrink:0,fontWeight:"700"}}>DERIV ✅</div>
+          </div>
 
           {/* Trade bars — fixed height containers so chart never shifts */}
           <div style={{flexShrink:0,minHeight:"22px"}}>
@@ -2943,7 +2913,7 @@ function App(){
 
           {/* Chart — fills all remaining space */}
           <div style={{flex:1,minHeight:0}}>
-            <MemoChart candles={candles} trade={trade} livePrice={mode==="forward"?livePrice:null} height={360} replayIdx={mode==="backtest"?btIdx:null} rLiveCandles={mode==="forward"?rLiveCandles:null}/>
+            <MemoChart candles={candles} trade={trade} livePrice={livePrice} height={360} replayIdx={null} rLiveCandles={rLiveCandles}/>
           </div>
         </div>
       ):(
@@ -2953,91 +2923,20 @@ function App(){
         {tab==="engine"&&(
           <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
 
-            {/* Mode selector */}
-            <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${BORDER}`,padding:"14px"}}>
-              <div style={{fontSize:"10px",color:DIM,marginBottom:"12px",textTransform:"uppercase"}}>Select Mode</div>
-              <div style={{display:"flex",flexDirection:"column",gap:"8px"}}>
-                {[
-                  {id:"backtest",icon:"⏪",title:"Backtest",desc:`Replay real XAU/USD 1M candles from history. Choose range below.`,col:PURPLE},
-                  {id:"forward",icon:"📡",title:"Forward Test (Live)",desc:`Fetches prev+today candles first, then connects to live XAU/USD. Bot trades on real-time 1M candles.`,col:RED},
-                ].map(({id,icon,title,desc,col})=>(
-                  <button key={id} onClick={()=>{setMode(id);setStatus("Choose settings below, then load data.");}}
-                    style={{background:mode===id?col+"15":"#0d0d0f",border:`1.5px solid ${mode===id?col:BORDER}`,
-                      borderRadius:"8px",padding:"12px",cursor:"pointer",textAlign:"left"}}>
-                    <div style={{display:"flex",gap:"10px",alignItems:"center"}}>
-                      <span style={{fontSize:"20px"}}>{icon}</span>
-                      <div>
-                        <div style={{fontSize:"12px",fontWeight:"700",color:mode===id?col:TEXT}}>{title}</div>
-                        <div style={{fontSize:"9px",color:DIM,marginTop:"2px"}}>{desc}</div>
-                      </div>
-                      {mode===id&&<span style={{marginLeft:"auto",fontSize:"12px",color:col}}>✓</span>}
-                    </div>
-                  </button>
-                ))}
+            {/* Live mode — only mode available */}
+            <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${RED}30`,padding:"14px"}}>
+              <div style={{fontSize:"10px",color:RED,marginBottom:"8px",textTransform:"uppercase",fontWeight:"600"}}>📡 Live Feed · Deriv WebSocket</div>
+              <div style={{padding:"8px 10px",background:"#0a1a0a",borderRadius:"6px",fontSize:"9px",color:GREEN,lineHeight:"1.7",border:`1px solid ${GREEN}20`,marginBottom:"12px"}}>
+                ✅ <span style={{fontWeight:"700"}}>No API key required.</span><br/>
+                Loads 3 days of real 1M candles (prev + today) from Deriv, then connects live ticks. MTF stacks are built on-the-fly from the same feed.
               </div>
+              <button onClick={running?stopForwardTest:startForwardTest}
+                style={{width:"100%",padding:"11px",borderRadius:"8px",background:running?RED+"22":RED,
+                  border:`1px solid ${RED}`,color:running?RED:TEXT,fontSize:"12px",fontWeight:"700",cursor:"pointer"}}>
+                {running?"⏸ Stop Live Feed":"▶ Start Live Feed"}
+              </button>
+              {liveStatus&&<div style={{marginTop:"8px",fontSize:"9px",color:running?GREEN:DIM,fontFamily:"'JetBrains Mono',monospace"}}>{liveStatus}</div>}
             </div>
-
-            {/* Backtest config */}
-            {mode==="backtest"&&(
-              <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${PURPLE}30`,padding:"14px"}}>
-                <div style={{fontSize:"10px",color:PURPLE,marginBottom:"12px",textTransform:"uppercase",fontWeight:"600"}}>⏪ Backtest Settings</div>
-
-                <div style={{fontSize:"9px",color:DIM,marginBottom:"8px"}}>Lookback range</div>
-                <div style={{display:"flex",gap:"5px",flexWrap:"wrap",marginBottom:"14px"}}>
-                  {[{v:"2weeks",l:"2W"},{v:"1month",l:"1M"},{v:"3months",l:"3M"},{v:"6months",l:"6M"},
-                    {v:"1year",l:"1Y"},{v:"2years",l:"2Y"},{v:"5years",l:"5Y"}].map(({v,l})=>(
-                    <button key={v} onClick={()=>setBtRange(v)} style={{padding:"5px 10px",borderRadius:"5px",
-                      background:btRange===v?PURPLE+"22":"#0d0d0f",border:`1px solid ${btRange===v?PURPLE:BORDER}`,
-                      color:btRange===v?PURPLE:MUTED,fontSize:"10px",cursor:"pointer",fontFamily:"'JetBrains Mono',monospace"}}>
-                      {l}
-                    </button>
-                  ))}
-                </div>
-
-                <div style={{padding:"8px 10px",background:"#0a1a0a",borderRadius:"5px",fontSize:"8px",lineHeight:"1.8",marginBottom:"12px",border:`1px solid ${GREEN}20`}}>
-                  <span style={{color:GREEN,fontWeight:"700"}}>✅ Deriv WebSocket — NO API key needed, ever.</span><br/>
-                  <span style={{color:DIM}}>Real OHLCV candles via Deriv's public API. Up to 5000 candles/page, paginated for longer ranges.</span>
-                </div>
-
-                <button onClick={loadBacktestData} disabled={btLoading}
-                  style={{width:"100%",padding:"11px",borderRadius:"8px",
-                    background:btLoading?"#222":PURPLE,border:"none",color:btLoading?DIM:TEXT,
-                    fontSize:"12px",fontWeight:"700",cursor:btLoading?"not-allowed":"pointer",
-                    display:"flex",alignItems:"center",justifyContent:"center",gap:"8px"}}>
-                  {btLoading&&<span className="spinner"/>}
-                  {btLoading?"Loading from Deriv...":"⚡ Load Candles (No API Key)"}
-                </button>
-                {btStatus&&<div style={{marginTop:"8px",fontSize:"9px",
-                  color:btStatus.startsWith("✓")||btStatus.startsWith("✅")?GREEN:btStatus.startsWith("❌")?RED:GOLD,
-                  fontFamily:"'JetBrains Mono',monospace",lineHeight:"1.8"}}>{btStatus}</div>}
-
-                {btCandles.length>0&&(
-                  <div style={{marginTop:"10px",padding:"8px 10px",background:"#0a1a0a",borderRadius:"6px",fontSize:"9px",color:GREEN,lineHeight:"1.7",border:`1px solid ${GREEN}20`}}>
-                    ✅ {btCandles.length.toLocaleString()} real {INSTRUMENTS[instrument]?.label||"XAU/USD"} 1M candles loaded via Deriv<br/>
-                    Range: {fmtDateShort(btCandles[0]?.ts)} → {fmtDateShort(btCandles[btCandles.length-1]?.ts)}<br/>
-                    MTF stacks built: 1M · 5M · 15M · 1H · 4H · 1D ✓<br/>
-                    <span style={{color:DIM}}>No API key used · Deriv public feed</span>
-                  </div>
-                )}
-              </div>
-            )}
-
-            {/* Forward test config — Deriv only */}
-            {mode==="forward"&&(
-              <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${RED}30`,padding:"14px"}}>
-                <div style={{fontSize:"10px",color:RED,marginBottom:"8px",textTransform:"uppercase",fontWeight:"600"}}>📡 Live Feed · Deriv WebSocket</div>
-                <div style={{padding:"8px 10px",background:"#0a1a0a",borderRadius:"6px",fontSize:"9px",color:GREEN,lineHeight:"1.7",border:`1px solid ${GREEN}20`,marginBottom:"12px"}}>
-                  ✅ <span style={{fontWeight:"700"}}>No API key required.</span><br/>
-                  Loads 3 days of real 1M candles (prev + today) from Deriv, then connects live ticks. MTF stacks are built on-the-fly from the same feed.
-                </div>
-                <button onClick={running?stopForwardTest:startForwardTest}
-                  style={{width:"100%",padding:"11px",borderRadius:"8px",background:running?RED+"22":RED,
-                    border:`1px solid ${RED}`,color:running?RED:TEXT,fontSize:"12px",fontWeight:"700",cursor:"pointer"}}>
-                  {running?"⏸ Stop Live Feed":"▶ Start Forward Test"}
-                </button>
-                {liveStatus&&<div style={{marginTop:"8px",fontSize:"9px",color:running?GREEN:DIM,fontFamily:"'JetBrains Mono',monospace"}}>{liveStatus}</div>}
-              </div>
-            )}
 
             {/* MTF info */}
             <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${BORDER}`,padding:"14px"}}>
@@ -3312,44 +3211,17 @@ function App(){
         {tab==="settings"&&(
           <div style={{display:"flex",flexDirection:"column",gap:"10px"}}>
 
-            {/* ── INSTRUMENT SELECTOR ── */}
-            <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${BORDER}`,padding:"14px"}}>
-              <div style={{fontSize:"10px",color:DIM,marginBottom:"12px",textTransform:"uppercase",fontWeight:"600"}}>📊 Select Instrument</div>
-              {(()=>{
-                const switchInst=(key)=>{
-                  const cfg=INSTRUMENTS[key];
-                  // setInstrument(key);rInstrument.current=key;_currentInst=key;
-                  setCandles([]);setLivePrice(0);
-                  if(liveFeedRef.current){liveFeedRef.current.close();liveFeedRef.current=null;}
-                  setLiveStatus("");setStatus("→ "+cfg.label+". Select mode and start.");
-                };
-                const groups=[
-                  {label:"Forex & Crypto",col:GOLD,keys:["XAUUSD","BTCUSD"]},
-                  {label:"Synthetics",col:PURPLE,keys:["V75","STEPIDX"]},
-                ];
-                return groups.map(g=>(
-                  <div key={g.label} style={{marginBottom:"10px"}}>
-                    <div style={{fontSize:"8px",color:g.col,marginBottom:"6px",textTransform:"uppercase",letterSpacing:"0.08em"}}>{g.label}</div>
-                    <div style={{display:"flex",gap:"6px"}}>
-                      {g.keys.map(k=>{
-                        const cfg=INSTRUMENTS[k];
-                        const active=instrument===k;
-                        return(
-                          <button key={k} onClick={()=>switchInst(k)}
-                            style={{flex:1,padding:"10px 8px",borderRadius:"7px",cursor:"pointer",
-                              textAlign:"center",transition:"all .15s",
-                              background:active?g.col+"22":"#0d0d0f",
-                              border:`1px solid ${active?g.col:BORDER}`,
-                              color:active?g.col:MUTED,fontWeight:"700",fontSize:"11px"}}>
-                            <div style={{fontSize:"18px",marginBottom:"3px"}}>{cfg.icon}</div>
-                            <div>{cfg.label}</div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  </div>
-                ));
-              })()}
+            {/* ── INSTRUMENT — XAU/USD only ── */}
+            <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${GOLD}30`,padding:"14px"}}>
+              <div style={{fontSize:"10px",color:DIM,marginBottom:"10px",textTransform:"uppercase",fontWeight:"600"}}>📊 Instrument</div>
+              <div style={{display:"flex",alignItems:"center",gap:"12px",padding:"10px 12px",background:GOLD+"15",borderRadius:"7px",border:`1px solid ${GOLD}40`}}>
+                <span style={{fontSize:"22px"}}>🥇</span>
+                <div>
+                  <div style={{fontSize:"14px",fontWeight:"700",color:GOLD}}>XAU/USD</div>
+                  <div style={{fontSize:"9px",color:DIM,marginTop:"1px"}}>Gold · Live via Deriv · No API key</div>
+                </div>
+                <span style={{marginLeft:"auto",fontSize:"11px",color:GOLD}}>✓ Active</span>
+              </div>
             </div>
 
             <div style={{background:PANEL,borderRadius:"8px",border:`1px solid ${GOLD}25`,padding:"14px"}}>
